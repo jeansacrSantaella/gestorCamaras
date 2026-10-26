@@ -1,0 +1,27 @@
+services:
+  go2rtc:
+    image: alexxit/go2rtc
+    container_name: go2rtc
+    restart: unless-stopped
+    ports:
+      - "1984:1984"   # visor y API de go2rtc
+      - "8554:8554"   # RTSP re-publicado
+    volumes:
+      - ./go2rtc.yaml:/config/go2rtc.yaml
+
+  panel:
+    build: ./panel
+    container_name: panel-camaras
+    restart: unless-stopped
+    depends_on:
+      - go2rtc
+    ports:
+      - "8080:8080"   # panel web
+    volumes:
+      - ./data:/data  # aquí se guarda cameras.json
+    environment:
+      GO2RTC_URL: "http://go2rtc:1984"
+      ADMIN_PIN: ""          # si lo llenas, pedirá este PIN para agregar o quitar cámaras
+      MAX_SESIONES: "2"
+      # Solo se usa la primera vez, si no existe data/cameras.json:
+      CAMARAS: "camara1=192.168.1.69,camara2=192.168.1.72"

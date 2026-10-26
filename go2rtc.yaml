@@ -1,0 +1,11 @@
+# Las cámaras ya no se escriben aquí: el panel las registra desde cameras.json.
+log:
+  level: info
+streams:
+  camara2:
+    - ffmpeg:rtsp://192.168.1.72:554/live/ch00_0#video=h264#audio=aac
+  camara1:
+    - ffmpeg:rtsp://192.168.1.71:554/live/ch00_0#video=h264#audio=aac
+preload:
+  camara2: ""
+  camara1: ""

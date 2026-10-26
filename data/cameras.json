@@ -1,0 +1,24 @@
+{
+  "camaras": [
+    {
+      "id": "camara2",
+      "nombre": "camara2",
+      "ip": "192.168.1.72",
+      "puerto_rtsp": 554,
+      "ruta_rtsp": "/live/ch00_0",
+      "puerto_onvif": 8899,
+      "usuario": "",
+      "clave": ""
+    },
+    {
+      "id": "camara1",
+      "nombre": "Camara1",
+      "ip": "192.168.1.71",
+      "puerto_rtsp": 554,
+      "ruta_rtsp": "/live/ch00_0",
+      "puerto_onvif": 8899,
+      "usuario": "",
+      "clave": ""
+    }
+  ]
+}
