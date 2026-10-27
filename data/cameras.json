@@ -1,8 +1,8 @@
 {
   "camaras": [
     {
-      "id": "camara2",
-      "nombre": "camara2",
+      "id": "camara1",
+      "nombre": "Camara1",
       "ip": "192.168.1.72",
       "puerto_rtsp": 554,
       "ruta_rtsp": "/live/ch00_0",
@@ -11,8 +11,8 @@
       "clave": ""
     },
     {
-      "id": "camara1",
-      "nombre": "Camara1",
+      "id": "camara2",
+      "nombre": "Camara2",
       "ip": "192.168.1.71",
       "puerto_rtsp": 554,
       "ruta_rtsp": "/live/ch00_0",

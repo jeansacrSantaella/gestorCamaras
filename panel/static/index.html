@@ -4,96 +4,28 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cámaras</title>
-<style>
-  :root {
-    --bg: #000; --panel: #0c0d0f; --linea: #212429; --texto: #e9ebee; --suave: #8a919b;
-    --acento: #4aa3ff; --vivo: #ff4d4f; --error: #ff8a80;
-    color-scheme: dark;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; background: var(--bg); color: var(--texto);
-    font: 15px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  }
-  header {
-    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
-    padding: 14px clamp(12px, 3vw, 28px); border-bottom: 1px solid var(--linea);
-  }
-  h1 { margin: 0; font-size: 1.05rem; font-weight: 600; letter-spacing: .01em; }
-  .vistas { display: flex; gap: 2px; padding: 3px; background: var(--panel); border: 1px solid var(--linea); border-radius: 8px; flex-wrap: wrap; }
-  .vistas button {
-    font: inherit; font-size: .9rem; color: var(--suave); background: transparent;
-    border: 0; border-radius: 6px; padding: 7px 14px; cursor: pointer;
-  }
-  .vistas button[aria-pressed="true"] { background: var(--acento); color: #00121f; font-weight: 600; }
-  .vistas button:not([aria-pressed="true"]):hover { color: var(--texto); }
-  main { padding: clamp(12px, 3vw, 28px); }
-  .rejilla { display: grid; gap: 14px; }
-  .rejilla.todas { grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); }
-  .rejilla.una { grid-template-columns: minmax(0, 1100px); justify-content: center; }
-  .tile { background: var(--panel); border: 1px solid var(--linea); border-radius: 10px; padding: 10px; }
-  .tile[hidden] { display: none; }
-  .cabecera { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
-  .cabecera h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: .95rem; font-weight: 600; }
-  .punto { width: 8px; height: 8px; border-radius: 50%; background: var(--vivo); }
-  .ampliar { font: inherit; font-size: .82rem; color: var(--suave); background: transparent; border: 1px solid var(--linea); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
-  .ampliar:hover { color: var(--texto); border-color: var(--suave); }
-  .una .ampliar { display: none; }
-  .vista { aspect-ratio: 16 / 9; overflow: hidden; background: #050607; border-radius: 6px; border: 1px solid var(--linea); }
-  .vista iframe { width: 100%; height: 100%; border: 0; transform-origin: center; transition: transform .15s; }
-  .mandos { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 12px; flex-wrap: wrap; }
-  .cruz {
-    --t: 48px; display: grid; gap: 6px;
-    grid-template-columns: repeat(3, var(--t)); grid-template-rows: repeat(3, var(--t));
-    grid-template-areas: ". arriba ." "izq . der" ". abajo .";
-  }
-  .una .cruz { --t: 62px; }
-  .cruz button[data-y="1"] { grid-area: arriba; }
-  .cruz button[data-x="-1"] { grid-area: izq; }
-  .cruz button[data-x="1"] { grid-area: der; }
-  .cruz button[data-y="-1"] { grid-area: abajo; }
-  .cruz button, .zoom button {
-    font: inherit; font-size: 1.25rem; color: var(--texto); background: #14161a;
-    border: 1px solid var(--linea); border-radius: 8px; cursor: pointer;
-    touch-action: none; user-select: none; -webkit-user-select: none;
-  }
-  .cruz button:hover, .zoom button:hover { border-color: var(--suave); }
-  .cruz button:active, .zoom button:active { background: var(--acento); color: #00121f; border-color: var(--acento); }
-  button:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
-  .zoom { display: flex; align-items: center; gap: 8px; }
-  .zoom button { width: 46px; height: 46px; }
-  .zoom output { min-width: 3ch; text-align: center; color: var(--suave); font-variant-numeric: tabular-nums; }
-  .pista { display: none; margin: 14px 0 0; color: var(--suave); font-size: .85rem; text-align: center; }
-  .una + .pista { display: block; }
-  #estado { min-height: 1.4em; margin-top: 12px; color: var(--error); font-size: .9rem; text-align: center; }
-  #aviso { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.88); z-index: 10; padding: 16px; }
-  #aviso[hidden], #toast[hidden] { display: none; }
-  .aviso-caja { max-width: 420px; background: var(--panel); border: 1px solid var(--linea); border-radius: 10px; padding: 20px; text-align: center; }
-  .aviso-caja button { font: inherit; font-weight: 600; margin-top: 8px; padding: 9px 18px; color: #00121f; background: var(--acento); border: 0; border-radius: 8px; cursor: pointer; }
-  #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--linea); border-radius: 8px; padding: 10px 16px; z-index: 11; max-width: 90vw; }
-  .ajustes { font: inherit; font-size: .9rem; color: var(--suave); background: transparent; border: 1px solid var(--linea); border-radius: 8px; padding: 7px 14px; cursor: pointer; }
-  .ajustes:hover { color: var(--texto); border-color: var(--suave); }
-  #vacio { color: var(--suave); text-align: center; margin: 40px 0; }
-  dialog { background: var(--panel); color: var(--texto); border: 1px solid var(--linea); border-radius: 10px; width: min(560px, 94vw); padding: 18px; }
-  dialog::backdrop { background: rgba(0,0,0,.7); }
-  dialog h2, dialog h3 { margin: 0; font-size: 1.05rem; }
-  dialog h3 { font-size: .95rem; margin-top: 18px; }
-  dialog label { display: block; margin: 10px 0 0; color: var(--suave); font-size: .88rem; }
-  dialog input, dialog textarea { display: block; width: 100%; margin-top: 4px; padding: 8px; font: inherit; color: var(--texto); background: #14161a; border: 1px solid var(--linea); border-radius: 6px; }
-  dialog button { font: inherit; padding: 7px 14px; color: var(--texto); background: #14161a; border: 1px solid var(--linea); border-radius: 8px; cursor: pointer; }
-  #cfg-form button[type="submit"] { margin-top: 14px; color: #00121f; background: var(--acento); border-color: var(--acento); font-weight: 600; }
-  .cfg-cab { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-  #cfg-lista { list-style: none; padding: 0; margin: 0; }
-  #cfg-lista li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--linea); }
-  #cfg-msg { min-height: 1.3em; color: var(--suave); font-size: .9rem; margin: 10px 0 0; }
-  @media (prefers-reduced-motion: reduce) { .vista iframe { transition: none; } }
-</style>
+<script>
+  (() => {
+    let tema;
+    try { tema = localStorage.getItem('tema'); } catch (e) {}
+    if (tema !== 'claro' && tema !== 'oscuro') {
+      tema = matchMedia('(prefers-color-scheme: dark)').matches ? 'oscuro' : 'claro';
+    }
+    document.documentElement.dataset.tema = tema;
+    document.documentElement.dataset.bsTheme = tema === 'oscuro' ? 'dark' : 'light';
+  })();
+</script>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="/style.css" rel="stylesheet">
 </head>
 <body>
   <header>
     <h1>Cámaras</h1>
     <nav class="vistas" id="vistas" aria-label="Vista"></nav>
-    <button id="abrir-config" type="button" class="ajustes">Configurar</button>
+    <div class="acciones">
+      <button id="cambiar-tema" type="button" class="btn btn-outline-secondary btn-sm"></button>
+      <button id="abrir-config" type="button" class="btn btn-primary btn-sm">Configurar</button>
+    </div>
   </header>
   <main>
     <div class="rejilla todas" id="rejilla"></div>
@@ -104,32 +36,47 @@
   <div id="aviso" hidden>
     <div class="aviso-caja">
       <p id="aviso-texto"></p>
-      <button id="aviso-boton" type="button">Volver a conectar</button>
+      <button id="aviso-boton" type="button" class="btn btn-primary">Volver a conectar</button>
     </div>
   </div>
   <div id="toast" role="status" aria-live="polite" hidden></div>
   <dialog id="config">
     <form method="dialog" class="cfg-cab"><h2>Configurar cámaras</h2><button aria-label="Cerrar">✕</button></form>
-    <label id="cfg-pin" hidden>PIN de administrador <input id="pin" type="password" autocomplete="off"></label>
+    <label id="cfg-pin" hidden>PIN de administrador <input id="pin" class="form-control" type="password" autocomplete="off"></label>
     <ul id="cfg-lista"></ul>
     <form id="cfg-form">
       <h3>Agregar cámaras</h3>
       <label>IP o IPs (una por línea o separadas por coma)
-        <textarea id="f-ips" rows="3" placeholder="192.168.1.69&#10;192.168.1.72" required></textarea></label>
-      <label>Nombre (opcional) <input id="f-nombre" maxlength="40"></label>
+        <textarea id="f-ips" class="form-control" rows="3" placeholder="192.168.1.69&#10;192.168.1.72" required></textarea></label>
+        <label>Nombre (opcional) <input id="f-nombre" class="form-control" maxlength="40"></label>
       <details><summary>Opciones avanzadas</summary>
-        <label>Puerto RTSP <input id="f-rtsp" type="number" value="554" min="1" max="65535"></label>
-        <label>Ruta RTSP <input id="f-ruta" value="/live/ch00_0"></label>
-        <label>Puerto ONVIF <input id="f-onvif" type="number" value="8899" min="1" max="65535"></label>
-        <label>Usuario <input id="f-usuario" autocomplete="off"></label>
-        <label>Contraseña <input id="f-clave" type="password" autocomplete="new-password"></label>
+          <label>Puerto RTSP <input id="f-rtsp" class="form-control" type="number" value="554" min="1" max="65535"></label>
+          <label>Ruta RTSP <input id="f-ruta" class="form-control" value="/live/ch00_0"></label>
+          <label>Puerto ONVIF <input id="f-onvif" class="form-control" type="number" value="8899" min="1" max="65535"></label>
+          <label>Usuario <input id="f-usuario" class="form-control" autocomplete="off"></label>
+          <label>Contraseña <input id="f-clave" class="form-control" type="password" autocomplete="new-password"></label>
       </details>
       <p id="cfg-msg" role="status"></p>
-      <button type="submit">Agregar</button>
+      <button type="submit" class="btn btn-primary">Agregar</button>
     </form>
   </dialog>
 
 <script>
+  const botonTema = document.getElementById('cambiar-tema');
+  function actualizarBotonTema() {
+    const oscuro = document.documentElement.dataset.tema === 'oscuro';
+    botonTema.textContent = oscuro ? '☀ Modo claro' : '☾ Modo oscuro';
+    botonTema.setAttribute('aria-label', oscuro ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro');
+  }
+  actualizarBotonTema();
+  botonTema.addEventListener('click', () => {
+    const tema = document.documentElement.dataset.tema === 'oscuro' ? 'claro' : 'oscuro';
+    document.documentElement.dataset.tema = tema;
+    document.documentElement.dataset.bsTheme = tema === 'oscuro' ? 'dark' : 'light';
+    try { localStorage.setItem('tema', tema); } catch (e) {}
+    actualizarBotonTema();
+  });
+
   const HOST = location.hostname;
   const VELOCIDAD = 0.7;
   const ZOOM_MIN = 1, ZOOM_MAX = 4, ZOOM_PASO = 0.5;
@@ -160,20 +107,20 @@
     el.innerHTML = `
       <div class="cabecera">
         <h2><span class="punto" aria-hidden="true"></span></h2>
-        <button class="ampliar" type="button">Ampliar</button>
+        <button class="ampliar btn btn-outline-secondary btn-sm" type="button">Ampliar</button>
       </div>
       <div class="vista"><iframe title="Video de ${nombre}" allow="autoplay"></iframe></div>
       <div class="mandos">
         <div class="cruz" role="group" aria-label="Girar ${nombre}">
-          <button data-x="0" data-y="1" aria-label="Arriba">↑</button>
-          <button data-x="-1" data-y="0" aria-label="Izquierda">←</button>
-          <button data-x="1" data-y="0" aria-label="Derecha">→</button>
-          <button data-x="0" data-y="-1" aria-label="Abajo">↓</button>
+          <button class="btn btn-outline-secondary" data-x="0" data-y="1" aria-label="Arriba">↑</button>
+          <button class="btn btn-outline-secondary" data-x="-1" data-y="0" aria-label="Izquierda">←</button>
+          <button class="btn btn-outline-secondary" data-x="1" data-y="0" aria-label="Derecha">→</button>
+          <button class="btn btn-outline-secondary" data-x="0" data-y="-1" aria-label="Abajo">↓</button>
         </div>
         <div class="zoom" role="group" aria-label="Zoom de ${nombre}">
-          <button data-z="-1" aria-label="Alejar">−</button>
+          <button class="btn btn-outline-secondary" data-z="-1" aria-label="Alejar">−</button>
           <output>1×</output>
-          <button data-z="1" aria-label="Acercar">+</button>
+          <button class="btn btn-outline-secondary" data-z="1" aria-label="Acercar">+</button>
         </div>
       </div>`;
 
@@ -305,7 +252,7 @@
       const txt = document.createElement('span');
       txt.textContent = `${c.nombre} — ${c.ip}`;
       const b = document.createElement('button');
-      b.type = 'button'; b.textContent = 'Quitar';
+      b.type = 'button'; b.className = 'btn btn-outline-danger btn-sm'; b.textContent = 'Quitar';
       b.addEventListener('click', async () => {
         if (!confirm(`¿Quitar «${c.nombre}»?`)) return;
         try { await cfg(`/api/camaras/${c.id}`, { method: 'DELETE' }); msg.textContent = ''; await cargarCamaras(); }
@@ -330,6 +277,7 @@
     ['todas', ...lista].forEach(c => {
       const b = document.createElement('button');
       b.type = 'button'; b.dataset.v = c === 'todas' ? c : c.id;
+      b.className = 'btn btn-sm';
       b.textContent = c === 'todas' ? 'Todas' : c.nombre;
       b.addEventListener('click', () => elegir(b.dataset.v));
       barra.appendChild(b);
