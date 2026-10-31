@@ -2,3 +2,4 @@
 .DS_Store
 data/eventos.log
 data/*.tmp
+data/fotos/

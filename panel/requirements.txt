@@ -2,3 +2,4 @@ fastapi
 uvicorn
 onvif-zeep
 requests
+websockets

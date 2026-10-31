@@ -17,6 +17,7 @@
 </script>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 <link href="/style.css" rel="stylesheet">
+<script type="module" src="/go2rtc/video-stream.js"></script>
 </head>
 <body>
   <header>
@@ -30,7 +31,7 @@
   <main>
     <div class="rejilla todas" id="rejilla"></div>
     <p id="vacio" hidden>Aún no hay cámaras. Usa «Configurar» para agregar la primera.</p>
-    <p class="pista">Flechas del teclado para girar la cámara. El zoom es digital.</p>
+    <p class="pista">Mantén pulsada una flecha (o la del teclado) para girar. El zoom es digital: rueda para ampliar, arrastra para moverte, doble clic para volver.</p>
     <div id="estado" role="status" aria-live="polite"></div>
   </main>
   <div id="aviso" hidden>
@@ -77,7 +78,6 @@
     actualizarBotonTema();
   });
 
-  const HOST = location.hostname;
   const VELOCIDAD = 0.7;
   const ZOOM_MIN = 1, ZOOM_MAX = 4, ZOOM_PASO = 0.5;
   const rejilla = document.getElementById('rejilla');
@@ -100,6 +100,20 @@
     } catch (e) { estado.textContent = 'La cámara no respondió: ' + e.message; }
   }
 
+  // El servidor para la cámara 2 s después de cada orden: mientras siga pulsado se repite cada 800 ms.
+  function mantener(nombre, x, y) {
+    let enCurso = false;
+    const enviar = async () => {
+      if (enCurso) return;  // no apilar órdenes si la cámara va lenta
+      enCurso = true;
+      await api(`/api/${nombre}/mover`, { x, y });
+      enCurso = false;
+    };
+    enviar();
+    const id = setInterval(enviar, 800);
+    return () => { clearInterval(id); api(`/api/${nombre}/parar`); };
+  }
+
   function crearTile(cam) {
     const nombre = cam.id;
     const el = document.createElement('section');
@@ -107,9 +121,10 @@
     el.innerHTML = `
       <div class="cabecera">
         <h2><span class="punto" aria-hidden="true"></span></h2>
+        <button class="audio btn btn-outline-secondary btn-sm" type="button" aria-pressed="false">🔇 Audio</button>
         <button class="ampliar btn btn-outline-secondary btn-sm" type="button">Ampliar</button>
       </div>
-      <div class="vista"><iframe title="Video de ${nombre}" allow="autoplay"></iframe></div>
+      <div class="vista" title="Rueda o botones para ampliar, arrastra para desplazarte, doble clic para volver"></div>
       <div class="mandos">
         <div class="cruz" role="group" aria-label="Girar ${nombre}">
           <button class="btn btn-outline-secondary" data-x="0" data-y="1" aria-label="Arriba">↑</button>
@@ -127,25 +142,83 @@
     el.querySelector('h2').append(cam.nombre);
     el.querySelectorAll('.cruz button').forEach(b => {
       const x = parseFloat(b.dataset.x) * VELOCIDAD, y = parseFloat(b.dataset.y) * VELOCIDAD;
-      b.addEventListener('pointerdown', e => { b.setPointerCapture(e.pointerId); api(`/api/${nombre}/mover`, { x, y }); });
-      const parar = () => api(`/api/${nombre}/parar`);
+      let soltar = null;
+      b.addEventListener('pointerdown', e => { b.setPointerCapture(e.pointerId); soltar = mantener(nombre, x, y); });
+      const parar = () => { if (soltar) { soltar(); soltar = null; } };
       b.addEventListener('pointerup', parar);
       b.addEventListener('pointercancel', parar);
       b.addEventListener('contextmenu', e => e.preventDefault());
     });
 
-    let zoom = 1;
-    const video = el.querySelector('iframe'), etiqueta = el.querySelector('output');
-    el.querySelectorAll('.zoom button').forEach(b => b.addEventListener('click', () => {
-      zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom + parseInt(b.dataset.z) * ZOOM_PASO));
-      video.style.transform = `scale(${zoom})`;
+    const vistaEl = el.querySelector('.vista'), etiqueta = el.querySelector('output');
+    let player = null, conAudio = false;
+
+    // Zoom digital (las cámaras no tienen zoom óptico) con desplazamiento al arrastrar.
+    let zoom = 1, dx = 0, dy = 0;
+    function aplicarZoom() {
+      const mx = vistaEl.clientWidth * (zoom - 1) / (2 * zoom), my = vistaEl.clientHeight * (zoom - 1) / (2 * zoom);
+      dx = Math.max(-mx, Math.min(mx, dx));
+      dy = Math.max(-my, Math.min(my, dy));
+      if (player) player.style.transform = `scale(${zoom}) translate(${dx}px, ${dy}px)`;
       etiqueta.textContent = `${zoom}×`;
-    }));
+      vistaEl.classList.toggle('ampliada', zoom > 1);
+    }
+    function cambiarZoom(paso) {
+      zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom + paso * ZOOM_PASO));
+      if (zoom === 1) dx = dy = 0;
+      aplicarZoom();
+    }
+    el.querySelectorAll('.zoom button').forEach(b => b.addEventListener('click', () => cambiarZoom(parseInt(b.dataset.z))));
+    vistaEl.addEventListener('wheel', e => { e.preventDefault(); cambiarZoom(e.deltaY < 0 ? 1 : -1); }, { passive: false });
+    let arrastrando = false;
+    vistaEl.addEventListener('pointerdown', e => {
+      if (zoom === 1) return;
+      arrastrando = true;
+      vistaEl.setPointerCapture(e.pointerId);
+    });
+    vistaEl.addEventListener('pointermove', e => {
+      if (!arrastrando) return;
+      dx += e.movementX / zoom;
+      dy += e.movementY / zoom;
+      aplicarZoom();
+    });
+    const finArrastre = () => { arrastrando = false; };
+    vistaEl.addEventListener('pointerup', finArrastre);
+    vistaEl.addEventListener('pointercancel', finArrastre);
+    vistaEl.addEventListener('dblclick', () => { zoom = 1; dx = dy = 0; aplicarZoom(); });
+
+    // Reproductor de go2rtc dentro de la página; el video pasa por el WebSocket del panel.
+    function crearPlayer() {
+      const p = document.createElement('video-stream');
+      p.mode = 'mse';
+      p.background = true;
+      vistaEl.replaceChildren(p);
+      p.src = `${location.origin}/api/ws?src=${encodeURIComponent(nombre)}&sesion=${encodeURIComponent(sesion || '')}`;
+      customElements.whenDefined('video-stream').then(() => requestAnimationFrame(() => {
+        if (!p.video) return;
+        p.video.muted = !conAudio;  // empieza silenciado hasta que se active
+        p.video.controls = false;
+        p.video.playsInline = true;
+      }));
+      player = p;
+      aplicarZoom();
+    }
+    function quitarPlayer() { vistaEl.replaceChildren(); player = null; }
+
+    const botonAudio = el.querySelector('.audio');
+    botonAudio.addEventListener('click', () => {
+      conAudio = !conAudio;
+      if (player && player.video) {
+        player.video.muted = !conAudio;
+        if (conAudio) player.video.play().catch(() => {});
+      }
+      botonAudio.textContent = conAudio ? '🔊 Audio' : '🔇 Audio';
+      botonAudio.setAttribute('aria-pressed', conAudio);
+    });
     el.querySelector('.ampliar').addEventListener('click', () => elegir(nombre));
 
     // Solo las cámaras visibles piden video: las ocultas liberan su conexión.
     let activo = false;
-    const url = `http://${HOST}:1984/stream.html?src=${encodeURIComponent(nombre)}&mode=mse`;
     const punto = el.querySelector('.punto');
     let ultimo;
     return {
@@ -159,13 +232,14 @@
         else if (s.estado === 'sin_video') punto.title = 'Responde en la red pero no llega video';
         else if (s.estado === 'sin_red') punto.title = 'La cámara no responde en la red';
         else punto.title = 'Sin datos';
-        if (anterior && anterior.estado !== 'ok' && s?.estado === 'ok' && activo) video.src = url;
+        if (anterior && anterior.estado !== 'ok' && s?.estado === 'ok' && activo) crearPlayer();
       },
       setActivo(on) {
         if (on === activo) return;
         activo = on;
-        video.src = on ? url : 'about:blank';
-      }
+        on ? crearPlayer() : quitarPlayer();
+      },
+      recargar() { if (activo) crearPlayer(); }
     };
   }
 
@@ -187,17 +261,18 @@
   }
 
   const teclas = { ArrowUp: [0, 1], ArrowDown: [0, -1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] };
-  let teclaActiva = null;
+  let teclaActiva = null, soltarTecla = null;
   document.addEventListener('keydown', e => {
     const d = teclas[e.key];
     if (vista === 'todas' || !d || e.repeat) return;
     e.preventDefault();
+    if (soltarTecla) soltarTecla();
     teclaActiva = e.key;
-    api(`/api/${vista}/mover`, { x: d[0] * VELOCIDAD, y: d[1] * VELOCIDAD });
+    soltarTecla = mantener(vista, d[0] * VELOCIDAD, d[1] * VELOCIDAD);
   });
-  document.addEventListener('keyup', e => {
-    if (e.key === teclaActiva && vista !== 'todas') { teclaActiva = null; api(`/api/${vista}/parar`); }
-  });
+  const soltarTeclado = () => { teclaActiva = null; if (soltarTecla) { soltarTecla(); soltarTecla = null; } };
+  document.addEventListener('keyup', e => { if (e.key === teclaActiva) soltarTeclado(); });
+  addEventListener('blur', soltarTeclado);
 
   // --- Límite de conexiones: el servidor lleva la cuenta y cierra la más antigua ---
   let sesion = null, temporizador = null;
@@ -223,9 +298,11 @@
     try {
       const r = await fetch('/api/sesion', { method: 'POST' });
       const d = await r.json();
+      const renovada = !!sesion;  // el servidor se reinició: los videos usan una sesión vieja
       sesion = d.id;
       aviso.hidden = true;
       aplicar();  // enciende los videos
+      if (renovada) tiles.forEach(t => t.recargar());
       if (d.desplazo) toast('Ya había ' + d.max + ' conexiones: se cerró la más antigua.');
       clearInterval(temporizador);
       temporizador = setInterval(pulso, 5000);

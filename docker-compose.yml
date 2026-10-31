@@ -26,9 +26,33 @@ services:
         required: false
     environment:
       GO2RTC_URL: "http://go2rtc:1984"
+      TZ: America/Mexico_City
       ADMIN_PIN: ""          # si lo llenas, pedirá este PIN para agregar o quitar cámaras
       MAX_SESIONES: "2"
       VIGILAR_CADA: "10"     # segundos entre revisiones de salud
       CAIDA_TRAS: "45"       # segundos seguidos sin video antes de avisar por Telegram
       # Solo se usa la primera vez, si no existe data/cameras.json:
       CAMARAS: "camara1=192.168.1.69,camara2=192.168.1.72"
+
+  detector:
+    build: ./detector
+    container_name: detector-camaras
+    restart: unless-stopped
+    depends_on:
+      - go2rtc
+      - panel
+    volumes:
+      - ./data:/data  # las fotos quedan en data/fotos/AAAA-MM-DD/
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      TZ: America/Mexico_City
+      INTERVALO: "1.5"       # segundos entre fotos analizadas por cámara
+      CONFIANZA: "0.5"       # certeza mínima de YOLO (0-1)
+      RETENCION_DIAS: "7"
+      RESUMEN_CADA_H: "2"    # resumen por Telegram en horas pares
+      SILENCIO_DESDE: "23"   # de 23:00 a 07:00 el resumen llega sin fotos
+      SILENCIO_HASTA: "7"
+    logging:
+      options: { max-size: "10m", max-file: "3" }

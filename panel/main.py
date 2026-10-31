@@ -1,3 +1,4 @@
+import asyncio
 import ipaddress
 import json
 import logging
@@ -9,7 +10,8 @@ import time
 from urllib.parse import quote
 
 import requests
-from fastapi import FastAPI, Header, HTTPException
+import websockets
+from fastapi import FastAPI, Header, HTTPException, Response, WebSocket
 from fastapi.staticfiles import StaticFiles
 from onvif import ONVIFCamera
 from pydantic import BaseModel
@@ -24,13 +26,22 @@ ARCHIVO = os.path.join(DATA_DIR, "cameras.json")
 GO2RTC = os.environ.get("GO2RTC_URL", "http://go2rtc:1984")
 ADMIN_PIN = os.environ.get("ADMIN_PIN", "")
 MAX_CAMARAS = int(os.environ.get("MAX_CAMARAS", "32"))
-TIMEOUT = float(os.environ.get("ONVIF_TIMEOUT", "3"))
+TIMEOUT = float(os.environ.get("ONVIF_TIMEOUT", "5"))
 AUTOPARADA = 2.0
 MAX_SESIONES = int(os.environ.get("MAX_SESIONES", "2"))
 SESION_CADUCA = float(os.environ.get("SESION_CADUCA", "60"))
 RUTA_OK = re.compile(r"^/[A-Za-z0-9_\-./?=&%]*$")
 
 app = FastAPI()
+
+
+@app.middleware("http")
+async def sin_cache(request, call_next):
+    # Que el navegador revalide la página y los scripts: así ve los cambios sin tener que forzar la recarga.
+    r = await call_next(request)
+    if not request.url.path.startswith("/api/"):
+        r.headers["Cache-Control"] = "no-cache"
+    return r
 _conexiones = {}
 _temporizadores = {}
 _estado = {}
@@ -152,6 +163,61 @@ def _sincronizar():
                 log.warning("go2rtc no responde (%s); se reintenta cada 10 s", e)
                 caido = True
         time.sleep(10)
+
+
+# ------------------- video: el panel hace de puente con go2rtc -------------------
+# Así el navegador solo habla con el puerto 8080 (mismo origen): el panel controla el <video>
+# (audio silenciado, zoom) y basta un único puerto para entrar desde fuera.
+_scripts = {}
+
+
+@app.get("/go2rtc/{archivo}")
+def script_go2rtc(archivo: str):
+    if archivo not in ("video-stream.js", "video-rtc.js"):
+        raise HTTPException(404)
+    if archivo not in _scripts:
+        try:
+            r = requests.get(f"{GO2RTC}/{archivo}", timeout=5)
+            r.raise_for_status()
+        except requests.RequestException as e:
+            raise HTTPException(502, f"go2rtc no responde: {e}")
+        _scripts[archivo] = r.content
+    return Response(_scripts[archivo], media_type="text/javascript")
+
+
+@app.websocket("/api/ws")
+async def video_ws(ws: WebSocket, src: str, sesion: str = ""):
+    with _candado:
+        valida = sesion in _sesiones
+    if not valida:
+        await ws.close(code=4403)
+        return
+    await ws.accept()
+    url = GO2RTC.replace("http", "ws", 1) + "/api/ws?src=" + quote(src, safe="")
+    try:
+        async with websockets.connect(url, max_size=None) as go2rtc:
+            async def subir():
+                while True:
+                    m = await ws.receive()
+                    if m["type"] == "websocket.disconnect":
+                        return
+                    await go2rtc.send(m["text"] if m.get("text") is not None else m["bytes"])
+
+            async def bajar():
+                async for m in go2rtc:
+                    await (ws.send_bytes(m) if isinstance(m, bytes) else ws.send_text(m))
+
+            tareas = [asyncio.create_task(subir()), asyncio.create_task(bajar())]
+            _, pendientes = await asyncio.wait(tareas, return_when=asyncio.FIRST_COMPLETED)
+            for t in pendientes:
+                t.cancel()
+    except Exception as e:
+        log.info("video %s cerrado: %s", src, e)
+    finally:
+        try:
+            await ws.close()
+        except Exception:
+            pass
 
 
 # ----------------------------- ONVIF / PTZ -----------------------------
@@ -409,4 +475,16 @@ def _copia_camaras():
 
 
 vigilante.iniciar(_copia_camaras, GO2RTC, DATA_DIR)
+
+
+def _precalentar():
+    """Conecta ONVIF al arrancar para que el primer movimiento no tarde varios segundos."""
+    for c in _copia_camaras():
+        try:
+            conectar(c["id"])
+        except Exception as e:
+            log.warning("%s onvif no disponible al arrancar: %s", c["id"], e)
+
+
+threading.Thread(target=_precalentar, daemon=True).start()
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

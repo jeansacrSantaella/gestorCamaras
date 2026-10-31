@@ -1,4 +1,6 @@
 """Vigila la salud de las cámaras y avisa por Telegram cuando se caen o vuelven."""
+import glob
+import json
 import logging
 import os
 import socket
@@ -227,7 +229,43 @@ def _texto_eventos():
     return "".join(ultimas) or "Sin eventos"
 
 
+def _hoy():
+    """Detecciones del día (las guarda el contenedor detector en data/fotos/AAAA-MM-DD)."""
+    fotos = sorted(glob.glob(os.path.join(os.path.dirname(_eventos), "fotos", time.strftime("%Y-%m-%d"), "*.jpg")),
+                   key=os.path.getmtime)
+    if not fotos:
+        _enviar("📷 Hoy aún no hay detecciones.")
+        return
+    nombres = {c["id"]: c["nombre"] for c in _obtener_camaras()}
+    cuenta = {}
+    for f in fotos:
+        base = os.path.basename(f)[:-4]
+        cid, clases = base.split("_")[0], base.rsplit("_", 1)[-1]
+        for clase in clases.split("-"):
+            cuenta.setdefault(cid, {}).setdefault(clase, 0)
+            cuenta[cid][clase] += 1
+    lineas = [f"📷 Detecciones de hoy ({len(fotos)} fotos)"]
+    for cid, clases in cuenta.items():
+        lineas.append(f'• {nombres.get(cid, cid)}: ' + ", ".join(f"{n} {c}" for c, n in clases.items()))
+    _enviar("\n".join(lineas))
+    ultimas = fotos[-10:]
+    archivos = {f"f{i}": open(f, "rb") for i, f in enumerate(ultimas)}
+    try:
+        media = [{"type": "photo", "media": f"attach://f{i}", "caption": os.path.basename(f)[:-4]}
+                 for i, f in enumerate(ultimas)]
+        if len(ultimas) == 1:
+            requests.post(f"{TG}/sendPhoto", data={"chat_id": CHAT, "caption": media[0]["caption"]},
+                          files={"photo": archivos["f0"]}, timeout=60)
+        else:
+            requests.post(f"{TG}/sendMediaGroup", data={"chat_id": CHAT, "media": json.dumps(media)},
+                          files=archivos, timeout=60)
+    finally:
+        for a in archivos.values():
+            a.close()
+
+
 AYUDA = ("Comandos:\n/estado — salud de cada cámara\n/foto [id] — foto actual (todas o una)\n"
+         "/hoy — detecciones del día (últimas 10 fotos)\n"
          "/eventos — últimos cambios registrados\n/ayuda — esta lista")
 
 
@@ -239,6 +277,8 @@ def _atender(texto):
         _enviar(_texto_estado())
     elif cmd == "/foto":
         _foto(arg)
+    elif cmd == "/hoy":
+        _hoy()
     elif cmd == "/eventos":
         _enviar(_texto_eventos())
     elif cmd in ("/ayuda", "/start"):
