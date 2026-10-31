@@ -146,8 +146,21 @@
     // Solo las cámaras visibles piden video: las ocultas liberan su conexión.
     let activo = false;
     const url = `http://${HOST}:1984/stream.html?src=${encodeURIComponent(nombre)}&mode=mse`;
+    const punto = el.querySelector('.punto');
+    let ultimo;
     return {
       el,
+      setSalud(s) {
+        const anterior = ultimo;
+        ultimo = s;
+        punto.className = 'punto ' + (s ? s.estado : '');
+        if (!s) punto.title = 'Sin datos';
+        else if (s.estado === 'ok') punto.title = `En línea · ${s.latencia_ms ?? '-'} ms · ${s.cortes_24h} cortes en 24 h`;
+        else if (s.estado === 'sin_video') punto.title = 'Responde en la red pero no llega video';
+        else if (s.estado === 'sin_red') punto.title = 'La cámara no responde en la red';
+        else punto.title = 'Sin datos';
+        if (anterior && anterior.estado !== 'ok' && s?.estado === 'ok' && activo) video.src = url;
+      },
       setActivo(on) {
         if (on === activo) return;
         activo = on;
@@ -263,6 +276,17 @@
     });
   }
 
+  async function cargarSalud() {
+    try {
+      const r = await fetch('/api/salud');
+      const d = await r.json();
+      tiles.forEach((t, id) => t.setSalud(d.camaras[id]));
+      const msg = 'El servidor de video (go2rtc) no responde.';
+      if (!d.go2rtc) estado.textContent = msg;
+      else if (estado.textContent === msg) estado.textContent = '';
+    } catch (e) { /* se reintenta */ }
+  }
+
   async function cargarCamaras() {
     let lista;
     try { lista = await (await fetch('/api/camaras')).json(); }
@@ -313,6 +337,8 @@
 
   cargarCamaras();
   setInterval(cargarCamaras, 10000);
+  cargarSalud();
+  setInterval(cargarSalud, 5000);
 </script>
 </body>
 </html>

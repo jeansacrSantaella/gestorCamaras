@@ -110,6 +110,8 @@ main {
 .cabecera { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
 .cabecera h2 { display: flex; align-items: center; gap: 9px; margin: 0; font-size: 1rem; font-weight: 650; }
 .punto { width: 9px; height: 9px; flex: 0 0 auto; border-radius: 50%; background: #e5484d; box-shadow: 0 0 0 3px rgb(229 72 77 / 14%); }
+.punto.ok { background: #30a46c; box-shadow: 0 0 0 3px rgb(48 164 108 / 16%); }
+.punto.sin_video { background: #f5a524; box-shadow: 0 0 0 3px rgb(245 165 36 / 18%); }
 .una .ampliar { display: none; }
 
 .vista {

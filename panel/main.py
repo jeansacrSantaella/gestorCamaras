@@ -15,6 +15,8 @@ from onvif import ONVIFCamera
 from pydantic import BaseModel
 from zeep.transports import Transport
 
+import vigilante
+
 log = logging.getLogger("uvicorn.error")
 
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
@@ -35,6 +37,7 @@ _estado = {}
 _sesiones = {}
 _expulsadas = {}
 _fallidas = set()  # cámaras que go2rtc rechazó: no se reintentan en bucle
+_registradas = {}  # fuente que este proceso registró en go2rtc; al arrancar se registran todas otra vez
 _candado = threading.Lock()
 _cfg = threading.Lock()
 _camaras = []
@@ -99,6 +102,8 @@ def fuente(c):
     cred = ""
     if c["usuario"]:
         cred = f'{quote(c["usuario"], safe="")}:{quote(c["clave"], safe="")}@'
+    # Se recodifica a propósito: con estas cámaras go2rtc no detecta los fotogramas clave del H264
+    # original y ni el navegador (MSE) ni las fotos arrancan si se copia el flujo tal cual.
     return f'ffmpeg:rtsp://{cred}{c["ip"]}:{c["puerto_rtsp"]}{c["ruta_rtsp"]}#video=h264#audio=aac'
 
 
@@ -112,6 +117,7 @@ def registrar_en_go2rtc(c):
         p = requests.put(f"{GO2RTC}/api/preload", params={"src": c["id"], "query": "video&audio"}, timeout=5)
         if not p.ok:
             log.warning("go2rtc no activó preload para %s (HTTP %s)", c["id"], p.status_code)
+        _registradas[c["id"]] = fuente(c)
     except requests.RequestException as e:
         log.warning("No se pudo hablar con go2rtc: %s", e)
 
@@ -133,7 +139,12 @@ def _sincronizar():
                 log.warning("go2rtc volvió a responder")
                 caido = False
             with _cfg:
-                pendientes = [dict(c) for c in _camaras if c["id"] not in presentes and c["id"] not in _fallidas]
+                pendientes = [
+                    dict(c) for c in _camaras
+                    if c["id"] not in _fallidas and (
+                        c["id"] not in presentes or _registradas.get(c["id"]) != fuente(c)
+                    )
+                ]
             for c in pendientes:
                 registrar_en_go2rtc(c)
         except Exception as e:
@@ -292,6 +303,11 @@ def estado_config():
     return {"protegido": bool(ADMIN_PIN)}
 
 
+@app.get("/api/salud")
+def salud():
+    return vigilante.salud()
+
+
 @app.get("/api/camaras")
 def listar():
     with _cfg:
@@ -343,6 +359,7 @@ def quitar(cid: str, x_admin: str = Header(default="")):
         _guardar()
     _conexiones.pop(cid, None)
     _fallidas.discard(cid)
+    _registradas.pop(cid, None)
     quitar_de_go2rtc(cid)
     return {"ok": True}
 
@@ -384,4 +401,12 @@ def parar(nombre: str):
 
 _cargar()
 threading.Thread(target=_sincronizar, daemon=True).start()
+
+
+def _copia_camaras():
+    with _cfg:
+        return [dict(c) for c in _camaras]
+
+
+vigilante.iniciar(_copia_camaras, GO2RTC, DATA_DIR)
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
