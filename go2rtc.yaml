@@ -7,9 +7,9 @@ ffmpeg:
   bin: ffmpeg
 streams:
   camara1:
-    - ffmpeg:rtsp://192.168.1.72:554/live/ch00_0#video=h264#audio=aac
+    - ffmpeg:rtsp://192.168.1.74:554/live/ch00_0#video=h264#audio=aac
   camara2:
-    - ffmpeg:rtsp://192.168.1.71:554/live/ch00_0#video=h264#audio=aac
+    - ffmpeg:rtsp://192.168.1.76:554/live/ch00_0#video=h264#audio=aac
 preload:
   camara1: ""
   camara2: ""
