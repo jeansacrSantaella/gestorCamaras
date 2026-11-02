@@ -3,7 +3,7 @@
     {
       "id": "camara1",
       "nombre": "Camara1",
-      "ip": "192.168.1.72",
+      "ip": "192.168.1.69",
       "puerto_rtsp": 554,
       "ruta_rtsp": "/live/ch00_0",
       "puerto_onvif": 8899,
@@ -13,7 +13,7 @@
     {
       "id": "camara2",
       "nombre": "Camara2",
-      "ip": "192.168.1.71",
+      "ip": "192.168.1.72",
       "puerto_rtsp": 554,
       "ruta_rtsp": "/live/ch00_0",
       "puerto_onvif": 8899,
