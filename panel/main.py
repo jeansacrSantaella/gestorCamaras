@@ -12,6 +12,7 @@ from urllib.parse import quote
 import requests
 import websockets
 from fastapi import FastAPI, Header, HTTPException, Response, WebSocket
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from onvif import ONVIFCamera
 from pydantic import BaseModel
@@ -31,6 +32,9 @@ AUTOPARADA = 2.0
 MAX_SESIONES = int(os.environ.get("MAX_SESIONES", "2"))
 SESION_CADUCA = float(os.environ.get("SESION_CADUCA", "60"))
 RUTA_OK = re.compile(r"^/[A-Za-z0-9_\-./?=&%]*$")
+FOTOS = os.path.join(DATA_DIR, "fotos")  # las guarda el detector: fotos/AAAA-MM-DD/<cid>_<HH-MM-SS>_<clases>.jpg
+DIA_OK = re.compile(r"^\d{4}-\d\d-\d\d$")
+FOTO_OK = re.compile(r"^[\w.-]+\.jpg$")
 
 app = FastAPI()
 
@@ -367,6 +371,36 @@ def _validar_ip(txt):
 @app.get("/api/config/estado")
 def estado_config():
     return {"protegido": bool(ADMIN_PIN)}
+
+
+# ------------------------- capturas del detector (solo lectura) -------------------------
+@app.get("/api/fotos/dias")
+def dias_con_fotos():
+    """Días que tienen capturas, del más nuevo al más viejo."""
+    if not os.path.isdir(FOTOS):
+        return []
+    return sorted((d for d in os.listdir(FOTOS) if DIA_OK.match(d) and os.path.isdir(os.path.join(FOTOS, d))), reverse=True)
+
+
+@app.get("/api/fotos")
+def fotos_del_dia(fecha: str):
+    """Nombres de las capturas de un día."""
+    if not DIA_OK.match(fecha):
+        raise HTTPException(422, "fecha inválida (AAAA-MM-DD)")
+    carpeta = os.path.join(FOTOS, fecha)
+    if not os.path.isdir(carpeta):
+        return []
+    return sorted(f for f in os.listdir(carpeta) if FOTO_OK.match(f))
+
+
+@app.get("/api/fotos/{fecha}/{archivo}")
+def foto_guardada(fecha: str, archivo: str):
+    if not DIA_OK.match(fecha) or not FOTO_OK.match(archivo):
+        raise HTTPException(404, "no existe")
+    ruta = os.path.join(FOTOS, fecha, archivo)
+    if not os.path.isfile(ruta):
+        raise HTTPException(404, "no existe")
+    return FileResponse(ruta, media_type="image/jpeg", headers={"Cache-Control": "max-age=86400"})
 
 
 @app.get("/api/salud")

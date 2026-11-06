@@ -29,3 +29,8 @@ La primera vez tarda varios minutos porque el detector descarga PyTorch y el mod
 Abre `http://localhost:8080` (panel) y `http://localhost:1984` (go2rtc).
 Para verlo desde el celular, permite el acceso en redes privadas en el firewall de Windows
 (puertos 8080 y 1984) y entra a `http://IP_DE_LA_LAPTOP:8080`.
+
+## Capturas por HTTP (solo lectura)
+
+`GET /api/fotos/dias`, `GET /api/fotos?fecha=AAAA-MM-DD` y `GET /api/fotos/AAAA-MM-DD/<archivo>.jpg` exponen las
+fotos que guarda el detector. Las usa panel-home para la línea de tiempo y la galería del día.
