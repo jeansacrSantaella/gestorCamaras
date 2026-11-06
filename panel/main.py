@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import secrets
+import shutil
 import tempfile
 import threading
 import time
@@ -429,6 +430,67 @@ def _zip(pares):
         raise
     nombre_zip = f"grabaciones_{time.strftime('%Y-%m-%d_%H-%M')}.zip"
     return FileResponse(tmp.name, media_type="application/zip", filename=nombre_zip, background=BackgroundTask(os.remove, tmp.name))
+
+
+# -------------------------- espacio en disco --------------------------
+_espacio_cache = {"ts": 0.0, "datos": None}
+
+
+def _medir_carpeta(base: str) -> tuple[int, int, int]:
+    """(bytes, archivos, días) de una carpeta fotos/ o clips/ con subcarpetas AAAA-MM-DD."""
+    if not os.path.isdir(base):
+        return (0, 0, 0)
+    total_bytes = 0
+    archivos = 0
+    dias = 0
+    try:
+        subdirs = os.listdir(base)
+    except OSError:
+        return (0, 0, 0)
+    for d in subdirs:
+        if DIA_OK.match(d):
+            ruta_d = os.path.join(base, d)
+            if os.path.isdir(ruta_d):
+                dias += 1
+                try:
+                    filenames = os.listdir(ruta_d)
+                except OSError:
+                    continue
+                for f in filenames:
+                    ruta_f = os.path.join(ruta_d, f)
+                    try:
+                        if os.path.isfile(ruta_f):
+                            total_bytes += os.path.getsize(ruta_f)
+                            archivos += 1
+                    except OSError:
+                        pass
+    return (total_bytes, archivos, dias)
+
+
+@app.get("/api/espacio")
+def espacio():
+    """Disco donde viven las grabaciones y cuánto ocupan fotos y clips. Se recalcula cada 60 s como máximo."""
+    ahora = time.time()
+    if ahora - _espacio_cache["ts"] < 60 and _espacio_cache["datos"] is not None:
+        return _espacio_cache["datos"]
+
+    os.makedirs(DATA_DIR, exist_ok=True)
+    uso = shutil.disk_usage(DATA_DIR)
+    f_b, f_a, f_d = _medir_carpeta(FOTOS)
+    c_b, c_a, c_d = _medir_carpeta(CLIPS)
+    ts = int(ahora)
+
+    datos = {
+        "total": uso.total,
+        "usado": uso.used,
+        "libre": uso.free,
+        "fotos": {"bytes": f_b, "archivos": f_a, "dias": f_d},
+        "clips": {"bytes": c_b, "archivos": c_a, "dias": c_d},
+        "ts": ts,
+    }
+    _espacio_cache["ts"] = ahora
+    _espacio_cache["datos"] = datos
+    return datos
 
 
 @app.get("/api/fotos/dias")

@@ -41,5 +41,5 @@ varios o el día completo (pide el `ADMIN_PIN` si está configurado) y descargar
 
 API: `GET /api/fotos/dias`, `GET /api/fotos?fecha=AAAA-MM-DD`, `GET /api/fotos/AAAA-MM-DD/<archivo>.jpg`
 (las usa panel-home), `GET /api/clips?fecha=…`, `GET /api/clips/AAAA-MM-DD/<archivo>.mp4`,
-`POST /api/grabaciones/borrar`, `DELETE /api/grabaciones/dia/AAAA-MM-DD`, `POST /api/grabaciones/exportar`
+`GET /api/espacio` (disco libre y cuánto ocupan fotos y clips, la usa panel-home), `POST /api/grabaciones/borrar`, `DELETE /api/grabaciones/dia/AAAA-MM-DD`, `POST /api/grabaciones/exportar`
 y `GET /api/grabaciones/exportar/AAAA-MM-DD`.
