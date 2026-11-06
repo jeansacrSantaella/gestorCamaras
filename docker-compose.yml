@@ -42,7 +42,7 @@ services:
       - go2rtc
       - panel
     volumes:
-      - ./data:/data  # las fotos quedan en data/fotos/AAAA-MM-DD/
+      - ./data:/data  # fotos en data/fotos/AAAA-MM-DD/ y clips en data/clips/AAAA-MM-DD/
     env_file:
       - path: .env
         required: false
@@ -50,8 +50,9 @@ services:
       TZ: America/Mexico_City
       INTERVALO: "1.5"       # segundos entre fotos analizadas por cámara
       CONFIANZA: "0.5"       # certeza mínima de YOLO (0-1)
-      RETENCION_DIAS: "7"
-      RESUMEN_CADA_H: "2"    # resumen por Telegram en horas pares
+      RETENCION_HORAS: "24"  # fotos y clips se borran solos pasado este tiempo
+      CLIP_SEG: "15"         # segundos de video al detectar una persona (0 = sin clips)
+      RESUMEN_CADA_H: "2"    # único aviso de detecciones: resumen por Telegram en horas pares
       SILENCIO_DESDE: "23"   # de 23:00 a 07:00 el resumen llega sin fotos
       SILENCIO_HASTA: "7"
     logging:

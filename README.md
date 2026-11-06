@@ -30,7 +30,16 @@ Abre `http://localhost:8080` (panel) y `http://localhost:1984` (go2rtc).
 Para verlo desde el celular, permite el acceso en redes privadas en el firewall de Windows
 (puertos 8080 y 1984) y entra a `http://IP_DE_LA_LAPTOP:8080`.
 
-## Capturas por HTTP (solo lectura)
+## Detecciones, clips y grabaciones
 
-`GET /api/fotos/dias`, `GET /api/fotos?fecha=AAAA-MM-DD` y `GET /api/fotos/AAAA-MM-DD/<archivo>.jpg` exponen las
-fotos que guarda el detector. Las usa panel-home para la línea de tiempo y la galería del día.
+El detector **no avisa por cada detección**: guarda la foto y solo manda el resumen cada `RESUMEN_CADA_H` horas.
+Cuando detecta una **persona** graba además un clip de `CLIP_SEG` segundos (solo uno a la vez por cámara).
+Fotos y clips se borran solos a las `RETENCION_HORAS` (24 h por defecto).
+
+En el panel, **Grabaciones** (`/grabaciones.html`) muestra fotos y videos por día y cámara, y permite borrar uno,
+varios o el día completo (pide el `ADMIN_PIN` si está configurado) y descargar la selección o el día en un `.zip`.
+
+API: `GET /api/fotos/dias`, `GET /api/fotos?fecha=AAAA-MM-DD`, `GET /api/fotos/AAAA-MM-DD/<archivo>.jpg`
+(las usa panel-home), `GET /api/clips?fecha=…`, `GET /api/clips/AAAA-MM-DD/<archivo>.mp4`,
+`POST /api/grabaciones/borrar`, `DELETE /api/grabaciones/dia/AAAA-MM-DD`, `POST /api/grabaciones/exportar`
+y `GET /api/grabaciones/exportar/AAAA-MM-DD`.

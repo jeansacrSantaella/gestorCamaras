@@ -1,8 +1,8 @@
 import logging
 import os
 import time
-import shutil
 import json
+import subprocess
 from datetime import datetime, timedelta
 
 import requests
@@ -20,7 +20,9 @@ INTERVALO = float(os.environ.get("INTERVALO", "1.5"))
 CONFIANZA = float(os.environ.get("CONFIANZA", "0.5"))
 MOVIMIENTO = float(os.environ.get("MOVIMIENTO", "0.004"))
 ENFRIAMIENTO = float(os.environ.get("ENFRIAMIENTO", "30"))
-RETENCION_DIAS = int(os.environ.get("RETENCION_DIAS", "7"))
+RETENCION_HORAS = float(os.environ.get("RETENCION_HORAS", "24"))
+CLIP_SEG = int(os.environ.get("CLIP_SEG", "15"))
+RTSP_URL = os.environ.get("RTSP_URL", "rtsp://go2rtc:8554")
 RESUMEN_CADA_H = int(os.environ.get("RESUMEN_CADA_H", "2"))
 MODELO = os.environ.get("MODELO", "yolo11n.pt")
 TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
@@ -29,10 +31,12 @@ SILENCIO_DESDE = int(os.environ.get("SILENCIO_DESDE", "23"))  # sin imágenes po
 SILENCIO_HASTA = int(os.environ.get("SILENCIO_HASTA", "7"))   # ...hasta esta (las fotos se siguen guardando)
 
 FOTOS = os.path.join(DATA_DIR, "fotos")
+CLIPS = os.path.join(DATA_DIR, "clips")
 CLASES = {0: "persona", 2: "carro", 3: "moto", 7: "carro", 15: "gato", 16: "perro"}
 
 _previo = {}
 _ultima = {}
+_grabando = {}
 _camaras_cache = []
 modelo = None
 
@@ -80,6 +84,25 @@ def movimiento_en(mascara, caja, ancho_original):
     roi = mascara[my1:my2, mx1:mx2]
     return np.count_nonzero(roi) / roi.size
 
+def grabar_clip(cid, fecha, hora):
+    if CLIP_SEG <= 0:
+        return
+    if _grabando.get(cid) and _grabando[cid].poll() is None:
+        return
+    ruta = os.path.join(CLIPS, fecha, f"{cid}_{hora}_persona.mp4")
+    os.makedirs(os.path.dirname(ruta), exist_ok=True)
+    cmd = [
+        "ffmpeg", "-nostdin", "-loglevel", "error", "-rtsp_transport", "tcp",
+        "-i", f"{RTSP_URL}/{cid}", "-t", str(CLIP_SEG), "-map", "0:v:0",
+        "-map", "0:a:0?", "-c:v", "copy", "-c:a", "aac", "-movflags", "+faststart",
+        "-y", ruta
+    ]
+    try:
+        _grabando[cid] = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        log.info(f"{cid}: grabando clip {CLIP_SEG}s")
+    except OSError as e:
+        log.warning("Error iniciando ffmpeg: %s", e)
+
 def procesar(c):
     cid = c["id"]
     img = foto(cid)
@@ -117,19 +140,40 @@ def procesar(c):
         
         os.makedirs(os.path.dirname(path), exist_ok=True)
         cv2.imwrite(path, img_plot)
+        if "persona" in validas:
+            grabar_clip(cid, fecha, hora)
         log.info(f"{cid}: {clases_str}")
 
 def limpiar():
-    ahora = time.time()
-    if not os.path.exists(FOTOS):
-        return
-    for d in os.listdir(FOTOS):
+    limite = time.time() - RETENCION_HORAS * 3600
+    for base in (FOTOS, CLIPS):
+        if not os.path.exists(base):
+            continue
         try:
-            dt = datetime.strptime(d, "%Y-%m-%d")
-            if (ahora - dt.timestamp()) > RETENCION_DIAS * 86400:
-                shutil.rmtree(os.path.join(FOTOS, d))
-        except (ValueError, OSError):
-            pass
+            subdirs = os.listdir(base)
+        except OSError:
+            continue
+        for d in subdirs:
+            folder = os.path.join(base, d)
+            if not os.path.isdir(folder):
+                continue
+            try:
+                files = os.listdir(folder)
+            except OSError:
+                continue
+            for f in files:
+                p = os.path.join(folder, f)
+                try:
+                    mt = os.path.getmtime(p)
+                    if mt < limite:
+                        os.remove(p)
+                except OSError:
+                    pass
+            try:
+                if not os.listdir(folder):
+                    os.rmdir(folder)
+            except OSError:
+                pass
 
 def fotos_entre(desde, hasta):
     fotos = []
@@ -154,7 +198,6 @@ def en_silencio(t):
         return h >= SILENCIO_DESDE or h < SILENCIO_HASTA
     return SILENCIO_DESDE <= h < SILENCIO_HASTA
 
-
 def resumen(desde, hasta):
     fotos = fotos_entre(desde, hasta)
     t_desde = time.strftime("%H:%M", time.localtime(desde))
@@ -177,6 +220,24 @@ def resumen(desde, hasta):
             res_c = ", ".join([f"{v} {k}" for k, v in cls_counts.items()])
             texto += f"• {nombre}: {res_c}\n"
     
+    n_clips = 0
+    if os.path.exists(CLIPS):
+        for root, _, files in os.walk(CLIPS):
+            for f in files:
+                if f.endswith(".mp4"):
+                    p = os.path.join(root, f)
+                    try:
+                        mt = os.path.getmtime(p)
+                        if desde <= mt < hasta:
+                            n_clips += 1
+                    except OSError:
+                        pass
+
+    if n_clips > 0:
+        if not texto.endswith("\n"):
+            texto += "\n"
+        texto += f"🎥 {n_clips} clips de personas (velos en el panel → Grabaciones)\n"
+
     silencio = bool(fotos) and en_silencio(time.time())
     if silencio:
         texto += f"(sin fotos de {SILENCIO_DESDE}:00 a {SILENCIO_HASTA}:00; pídelas con /hoy)"
@@ -236,11 +297,12 @@ def main():
     limpiar()
     proximo = siguiente_resumen(time.time())
     inicio = time.time()
+    proxima_limpieza = time.time() + 600
     
     if TOKEN and CHAT:
         try:
             requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", 
-                          json={"chat_id": CHAT, "text": f"🔎 Detector iniciado: personas, carros, motos, gatos y perros. Resumen cada {RESUMEN_CADA_H} h."}, timeout=10)
+                          json={"chat_id": CHAT, "text": f"🔎 Detector iniciado. Sin avisos por detección: resumen cada {RESUMEN_CADA_H} h. Fotos y clips se guardan {int(RETENCION_HORAS)} h."}, timeout=10)
         except Exception:
             pass
 
@@ -257,6 +319,10 @@ def main():
             inicio = proximo
             proximo = siguiente_resumen(ahora)
             limpiar()
+        
+        if ahora >= proxima_limpieza:
+            limpiar()
+            proxima_limpieza = ahora + 600
         
         time.sleep(INTERVALO)
 

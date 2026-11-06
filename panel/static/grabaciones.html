@@ -1,0 +1,502 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Grabaciones</title>
+<script>
+  (() => {
+    let tema;
+    try { tema = localStorage.getItem('tema'); } catch (e) {}
+    if (tema !== 'claro' && tema !== 'oscuro') {
+      tema = matchMedia('(prefers-color-scheme: dark)').matches ? 'oscuro' : 'claro';
+    }
+    document.documentElement.dataset.tema = tema;
+    document.documentElement.dataset.bsTheme = tema === 'oscuro' ? 'dark' : 'light';
+  })();
+</script>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="/style.css" rel="stylesheet">
+</head>
+<body>
+<header>
+  <h1>Grabaciones</h1>
+  <div class="acciones">
+    <a href="/" class="btn btn-outline-secondary btn-sm">← Cámaras en vivo</a>
+    <button id="cambiar-tema" type="button" class="btn btn-outline-secondary btn-sm"></button>
+  </div>
+</header>
+<main class="grab">
+  <div class="grab-barra">
+    <select id="dia" class="form-select form-select-sm" aria-label="Día"></select>
+    <select id="camara" class="form-select form-select-sm" aria-label="Cámara"><option value="">Todas las cámaras</option></select>
+    <div class="btn-group btn-group-sm" role="group" aria-label="Tipo">
+      <button type="button" class="btn btn-outline-primary active" data-tipo="fotos" aria-pressed="true">Fotos</button>
+      <button type="button" class="btn btn-outline-primary" data-tipo="clips" aria-pressed="false">Videos</button>
+    </div>
+    <label class="grab-todo"><input type="checkbox" id="todo"> Seleccionar todo</label>
+    <span id="cuenta" class="grab-cuenta"></span>
+    <button id="exportar-sel" class="btn btn-outline-secondary btn-sm" disabled>Descargar selección (.zip)</button>
+    <button id="borrar-sel" class="btn btn-outline-danger btn-sm" disabled>Borrar selección</button>
+    <button id="exportar-dia" class="btn btn-outline-secondary btn-sm">Exportar día completo</button>
+    <button id="borrar-dia" class="btn btn-danger btn-sm">Borrar día</button>
+  </div>
+  <label id="pin-caja" class="grab-pin" hidden>PIN de administrador <input id="pin" type="password" class="form-control form-control-sm" autocomplete="off"></label>
+  <p class="pista">Las fotos y videos se borran solos a las 24 h. Los videos se graban solo cuando se detecta una persona.</p>
+  <div id="galeria" class="grab-galeria"></div>
+  <p id="vacio" hidden>No hay grabaciones para este filtro.</p>
+  <div id="estado" role="status" aria-live="polite"></div>
+</main>
+<dialog id="visor" class="grab-visor">
+  <form method="dialog" class="cfg-cab"><h2 id="visor-titulo"></h2><button aria-label="Cerrar">✕</button></form>
+  <div id="visor-medio"></div>
+  <div class="grab-visor-acciones">
+    <a id="visor-descargar" class="btn btn-outline-secondary btn-sm" download>Descargar</a>
+    <button id="visor-borrar" type="button" class="btn btn-outline-danger btn-sm">Borrar</button>
+  </div>
+</dialog>
+
+<script>
+  const botonTema = document.getElementById('cambiar-tema');
+  function actualizarBotonTema() {
+    const oscuro = document.documentElement.dataset.tema === 'oscuro';
+    botonTema.textContent = oscuro ? '☀ Modo claro' : '☾ Modo oscuro';
+    botonTema.setAttribute('aria-label', oscuro ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro');
+  }
+  actualizarBotonTema();
+  botonTema.addEventListener('click', () => {
+    const tema = document.documentElement.dataset.tema === 'oscuro' ? 'claro' : 'oscuro';
+    document.documentElement.dataset.tema = tema;
+    document.documentElement.dataset.bsTheme = tema === 'oscuro' ? 'dark' : 'light';
+    try { localStorage.setItem('tema', tema); } catch (e) {}
+    actualizarBotonTema();
+  });
+
+  let tipo = 'fotos';
+  let dia = '';
+  let camara = '';
+  let items = [];
+  const seleccion = new Set();
+  const camarasMap = new Map();
+  const visor = document.getElementById('visor');
+  let itemVisorActual = null;
+
+  function parseNombre(nombre) {
+    const sinExt = nombre.replace(/\.(jpg|mp4)$/, '');
+    const [cid = '', hora = '', clases = ''] = sinExt.split('_');
+    return {
+      cid,
+      hora: hora.replaceAll('-', ':'),
+      clases: clases ? clases.split('-').join(', ') : ''
+    };
+  }
+
+  async function recargarDias() {
+    try {
+      const res = await fetch('/api/fotos/dias');
+      if (!res.ok) throw new Error('Error al cargar la lista de días.');
+      const resDias = await res.json();
+      await llenarDias(resDias || []);
+    } catch (e) {
+      document.getElementById('estado').textContent = e.message;
+    }
+  }
+
+  async function llenarDias(diasLista) {
+    const selDia = document.getElementById('dia');
+    selDia.replaceChildren();
+    if (!diasLista || diasLista.length === 0) {
+      dia = '';
+      items = [];
+      seleccion.clear();
+      renderGaleria();
+      return;
+    }
+    diasLista.forEach(d => {
+      const opt = document.createElement('option');
+      opt.value = d;
+      const fechaObj = new Date(d + 'T12:00');
+      opt.textContent = fechaObj.toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric', month: 'short' });
+      selDia.appendChild(opt);
+    });
+    if (!diasLista.includes(dia)) {
+      dia = diasLista[0];
+    }
+    selDia.value = dia;
+    await cargar();
+  }
+
+  async function inicializar() {
+    try {
+      const [resDias, resCams, resCfg] = await Promise.all([
+        fetch('/api/fotos/dias').then(r => r.ok ? r.json() : []),
+        fetch('/api/camaras').then(r => r.ok ? r.json() : []),
+        fetch('/api/config/estado').then(r => r.ok ? r.json() : {})
+      ]);
+
+      if (resCfg && resCfg.protegido) {
+        document.getElementById('pin-caja').hidden = false;
+      }
+
+      camarasMap.clear();
+      const selCamara = document.getElementById('camara');
+      selCamara.replaceChildren();
+      const optTodas = document.createElement('option');
+      optTodas.value = '';
+      optTodas.textContent = 'Todas las cámaras';
+      selCamara.appendChild(optTodas);
+
+      (resCams || []).forEach(c => {
+        camarasMap.set(c.id, c.nombre);
+        const opt = document.createElement('option');
+        opt.value = c.id;
+        opt.textContent = c.nombre;
+        selCamara.appendChild(opt);
+      });
+
+      await llenarDias(resDias || []);
+    } catch (e) {
+      document.getElementById('estado').textContent = 'Error al cargar los datos iniciales: ' + e.message;
+    }
+  }
+
+  async function cargar() {
+    document.getElementById('estado').textContent = '';
+    dia = document.getElementById('dia').value;
+    camara = document.getElementById('camara').value;
+
+    if (!dia) {
+      items = [];
+      seleccion.clear();
+      renderGaleria();
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/${tipo}?fecha=${encodeURIComponent(dia)}`);
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || 'Error al obtener la lista de grabaciones.');
+      }
+      let lista = await res.json();
+
+      if (camara) {
+        lista = lista.filter(nombre => {
+          const [cid] = nombre.replace(/\.(jpg|mp4)$/, '').split('_');
+          return cid === camara;
+        });
+      }
+
+      lista.sort((a, b) => {
+        const horaA = a.split('_')[1] || a;
+        const horaB = b.split('_')[1] || b;
+        return horaB.localeCompare(horaA);
+      });
+
+      items = lista;
+      seleccion.clear();
+      renderGaleria();
+    } catch (e) {
+      document.getElementById('estado').textContent = e.message;
+      items = [];
+      seleccion.clear();
+      renderGaleria();
+    }
+  }
+
+  function renderGaleria() {
+    const galeria = document.getElementById('galeria');
+    galeria.replaceChildren();
+
+    const vacio = document.getElementById('vacio');
+    vacio.hidden = items.length > 0;
+
+    items.forEach(nombre => {
+      const { cid, hora, clases } = parseNombre(nombre);
+      const figure = document.createElement('figure');
+      figure.className = 'grab-item' + (seleccion.has(nombre) ? ' sel' : '');
+
+      const check = document.createElement('input');
+      check.type = 'checkbox';
+      check.className = 'grab-check';
+      check.setAttribute('aria-label', nombre);
+      check.checked = seleccion.has(nombre);
+
+      check.addEventListener('change', () => {
+        if (check.checked) {
+          seleccion.add(nombre);
+          figure.classList.add('sel');
+        } else {
+          seleccion.delete(nombre);
+          figure.classList.remove('sel');
+        }
+        actualizarBarra();
+      });
+
+      figure.appendChild(check);
+
+      const abrirVisorHandler = () => abrirVisor(nombre);
+
+      if (tipo === 'fotos') {
+        const img = document.createElement('img');
+        img.loading = 'lazy';
+        img.src = `/api/fotos/${encodeURIComponent(dia)}/${encodeURIComponent(nombre)}`;
+        img.alt = `${camarasMap.get(cid) || cid} ${hora}`;
+        img.addEventListener('click', abrirVisorHandler);
+        figure.appendChild(img);
+      } else {
+        const video = document.createElement('video');
+        video.preload = 'metadata';
+        video.muted = true;
+        video.src = `/api/clips/${encodeURIComponent(dia)}/${encodeURIComponent(nombre)}`;
+        video.addEventListener('click', abrirVisorHandler);
+        figure.appendChild(video);
+
+        const playSpan = document.createElement('span');
+        playSpan.className = 'grab-play';
+        playSpan.textContent = '▶';
+        playSpan.addEventListener('click', abrirVisorHandler);
+        figure.appendChild(playSpan);
+      }
+
+      const figcaption = document.createElement('figcaption');
+      const infoDiv = document.createElement('div');
+      infoDiv.textContent = `${camarasMap.get(cid) || cid} ${hora}`;
+      figcaption.appendChild(infoDiv);
+
+      if (clases) {
+        const metaDiv = document.createElement('div');
+        metaDiv.className = 'grab-meta';
+        metaDiv.textContent = clases;
+        figcaption.appendChild(metaDiv);
+      }
+
+      figure.appendChild(figcaption);
+      galeria.appendChild(figure);
+    });
+
+    actualizarBarra();
+  }
+
+  function actualizarBarra() {
+    const cuenta = document.getElementById('cuenta');
+    cuenta.textContent = `${items.length} elementos · ${seleccion.size} seleccionados`;
+
+    const deshabilitado = seleccion.size === 0;
+    document.getElementById('exportar-sel').disabled = deshabilitado;
+    document.getElementById('borrar-sel').disabled = deshabilitado;
+
+    const todoCheck = document.getElementById('todo');
+    if (items.length > 0 && seleccion.size === items.length) {
+      todoCheck.checked = true;
+      todoCheck.indeterminate = false;
+    } else if (seleccion.size > 0 && seleccion.size < items.length) {
+      todoCheck.checked = false;
+      todoCheck.indeterminate = true;
+    } else {
+      todoCheck.checked = false;
+      todoCheck.indeterminate = false;
+    }
+  }
+
+  document.getElementById('todo').addEventListener('change', (e) => {
+    const galeria = document.getElementById('galeria');
+    const checks = galeria.querySelectorAll('.grab-check');
+    const figures = galeria.querySelectorAll('.grab-item');
+    if (e.target.checked) {
+      items.forEach(n => seleccion.add(n));
+      checks.forEach(c => c.checked = true);
+      figures.forEach(f => f.classList.add('sel'));
+    } else {
+      seleccion.clear();
+      checks.forEach(c => c.checked = false);
+      figures.forEach(f => f.classList.remove('sel'));
+    }
+    actualizarBarra();
+  });
+
+  document.querySelectorAll('.btn-group[aria-label="Tipo"] button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.dataset.tipo === tipo) return;
+      tipo = btn.dataset.tipo;
+      document.querySelectorAll('.btn-group[aria-label="Tipo"] button').forEach(b => {
+        const active = b === btn;
+        b.setAttribute('aria-pressed', active ? 'true' : 'false');
+        b.classList.toggle('active', active);
+      });
+      cargar();
+    });
+  });
+
+  document.getElementById('dia').addEventListener('change', () => cargar());
+  document.getElementById('camara').addEventListener('change', () => cargar());
+
+  function abrirVisor(nombre) {
+    itemVisorActual = nombre;
+    const { cid, hora } = parseNombre(nombre);
+    document.getElementById('visor-titulo').textContent = `${camarasMap.get(cid) || cid} ${hora}`;
+
+    const medio = document.getElementById('visor-medio');
+    medio.replaceChildren();
+
+    const fileUrl = `/api/${tipo}/${encodeURIComponent(dia)}/${encodeURIComponent(nombre)}`;
+    if (tipo === 'fotos') {
+      const img = document.createElement('img');
+      img.src = fileUrl;
+      img.alt = `${camarasMap.get(cid) || cid} ${hora}`;
+      medio.appendChild(img);
+    } else {
+      const video = document.createElement('video');
+      video.controls = true;
+      video.autoplay = true;
+      video.playsInline = true;
+      video.src = fileUrl;
+      medio.appendChild(video);
+    }
+
+    const btnDescargar = document.getElementById('visor-descargar');
+    btnDescargar.href = fileUrl;
+    btnDescargar.download = nombre;
+
+    visor.showModal();
+  }
+
+  document.getElementById('visor-borrar').addEventListener('click', async () => {
+    if (!itemVisorActual) return;
+    if (!confirm(`¿Borrar ${itemVisorActual}?`)) return;
+
+    const pinVal = document.getElementById('pin').value;
+    const body = { [tipo]: [`${dia}/${itemVisorActual}`] };
+
+    try {
+      const res = await fetch('/api/grabaciones/borrar', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin': pinVal
+        },
+        body: JSON.stringify(body)
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.detail || 'Error al borrar.');
+
+      document.getElementById('estado').textContent = `Se borró 1 elemento.`;
+      visor.close();
+      await cargar();
+      if (items.length === 0) {
+        await recargarDias();
+      }
+    } catch (e) {
+      document.getElementById('estado').textContent = e.message;
+    }
+  });
+
+  document.getElementById('borrar-sel').addEventListener('click', async () => {
+    if (seleccion.size === 0) return;
+    if (!confirm(`¿Borrar ${seleccion.size} elementos? No se puede deshacer.`)) return;
+
+    const pinVal = document.getElementById('pin').value;
+    const arr = Array.from(seleccion).map(n => `${dia}/${n}`);
+    const body = { [tipo]: arr };
+
+    try {
+      const res = await fetch('/api/grabaciones/borrar', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin': pinVal
+        },
+        body: JSON.stringify(body)
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.detail || 'Error al borrar.');
+
+      document.getElementById('estado').textContent = `Se borraron ${d.borrados ?? seleccion.size}.`;
+      await cargar();
+      if (items.length === 0) {
+        await recargarDias();
+      }
+    } catch (e) {
+      document.getElementById('estado').textContent = e.message;
+    }
+  });
+
+  document.getElementById('borrar-dia').addEventListener('click', async () => {
+    if (!dia) return;
+    if (!confirm(`¿Borrar TODAS las fotos y videos del ${dia}?`)) return;
+
+    const pinVal = document.getElementById('pin').value;
+
+    try {
+      const res = await fetch(`/api/grabaciones/dia/${encodeURIComponent(dia)}`, {
+        method: 'DELETE',
+        headers: {
+          'X-Admin': pinVal
+        }
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.detail || 'Error al borrar día.');
+
+      document.getElementById('estado').textContent = `Se borraron ${d.borrados ?? 0} elementos del día.`;
+      await recargarDias();
+    } catch (e) {
+      document.getElementById('estado').textContent = e.message;
+    }
+  });
+
+  document.getElementById('exportar-sel').addEventListener('click', async () => {
+    if (seleccion.size === 0) return;
+
+    if (seleccion.size === 1) {
+      const single = Array.from(seleccion)[0];
+      const url = `/api/${tipo}/${encodeURIComponent(dia)}/${encodeURIComponent(single)}`;
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = single;
+      a.click();
+      return;
+    }
+
+    const pinVal = document.getElementById('pin').value;
+    const arr = Array.from(seleccion).map(n => `${dia}/${n}`);
+    const body = { [tipo]: arr };
+
+    try {
+      document.getElementById('estado').textContent = 'Preparando descarga…';
+      const res = await fetch('/api/grabaciones/exportar', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin': pinVal
+        },
+        body: JSON.stringify(body)
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || 'Error al exportar.');
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `grabaciones_${dia}.zip`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      document.getElementById('estado').textContent = '';
+    } catch (e) {
+      document.getElementById('estado').textContent = e.message;
+    }
+  });
+
+  document.getElementById('exportar-dia').addEventListener('click', () => {
+    if (!dia) return;
+    const a = document.createElement('a');
+    a.href = `/api/grabaciones/exportar/${encodeURIComponent(dia)}`;
+    a.download = `grabaciones_${dia}.zip`;
+    a.click();
+  });
+
+  inicializar();
+</script>
+</body>
+</html>

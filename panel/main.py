@@ -5,8 +5,10 @@ import logging
 import os
 import re
 import secrets
+import tempfile
 import threading
 import time
+import zipfile
 from urllib.parse import quote
 
 import requests
@@ -14,6 +16,7 @@ import websockets
 from fastapi import FastAPI, Header, HTTPException, Response, WebSocket
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.background import BackgroundTask
 from onvif import ONVIFCamera
 from pydantic import BaseModel
 from zeep.transports import Transport
@@ -35,6 +38,9 @@ RUTA_OK = re.compile(r"^/[A-Za-z0-9_\-./?=&%]*$")
 FOTOS = os.path.join(DATA_DIR, "fotos")  # las guarda el detector: fotos/AAAA-MM-DD/<cid>_<HH-MM-SS>_<clases>.jpg
 DIA_OK = re.compile(r"^\d{4}-\d\d-\d\d$")
 FOTO_OK = re.compile(r"^[\w.-]+\.jpg$")
+CLIPS = os.path.join(DATA_DIR, "clips")  # fotos y clips: los graba el detector y los borra a las RETENCION_HORAS
+CLIP_OK = re.compile(r"^[\w.-]+\.mp4$")
+TIPOS = {"fotos": (FOTOS, FOTO_OK, "image/jpeg"), "clips": (CLIPS, CLIP_OK, "video/mp4")}
 
 app = FastAPI()
 
@@ -373,13 +379,66 @@ def estado_config():
     return {"protegido": bool(ADMIN_PIN)}
 
 
-# ------------------------- capturas del detector (solo lectura) -------------------------
+# ------------------------- capturas y clips del detector -------------------------
+def _ruta(tipo, fecha, archivo):
+    """Ruta segura de una foto o clip; 404 si el nombre no es válido."""
+    if tipo not in TIPOS:
+        raise HTTPException(404, "no existe")
+    base, patron, _ = TIPOS[tipo]
+    if not DIA_OK.match(fecha) or not patron.match(archivo):
+        raise HTTPException(404, "no existe")
+    return os.path.join(base, fecha, archivo)
+
+
+class Seleccion(BaseModel):
+    fotos: list[str] = []   # cada elemento "AAAA-MM-DD/archivo.jpg"
+    clips: list[str] = []   # cada elemento "AAAA-MM-DD/archivo.mp4"
+
+
+def _resolver(sel):
+    tot = len(sel.fotos) + len(sel.clips)
+    if tot > 2000:
+        raise HTTPException(422, "demasiados elementos")
+    res = []
+    for tipo, lista in (("fotos", sel.fotos), ("clips", sel.clips)):
+        for elem in lista:
+            if "/" not in elem:
+                raise HTTPException(422, "elemento inválido")
+            fecha, archivo = elem.split("/", 1)
+            ruta = _ruta(tipo, fecha, archivo)
+            if os.path.isfile(ruta):
+                res.append((ruta, f"{tipo}/{fecha}/{archivo}"))
+    return res
+
+
+def _zip(pares):
+    if not pares:
+        raise HTTPException(404, "Nada que exportar")
+    tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
+    try:
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_STORED) as z:
+            for ruta, arcname in pares:
+                z.write(ruta, arcname=arcname)
+        tmp.close()
+    except Exception:
+        tmp.close()
+        try:
+            os.remove(tmp.name)
+        except OSError:
+            pass
+        raise
+    nombre_zip = f"grabaciones_{time.strftime('%Y-%m-%d_%H-%M')}.zip"
+    return FileResponse(tmp.name, media_type="application/zip", filename=nombre_zip, background=BackgroundTask(os.remove, tmp.name))
+
+
 @app.get("/api/fotos/dias")
 def dias_con_fotos():
-    """Días que tienen capturas, del más nuevo al más viejo."""
-    if not os.path.isdir(FOTOS):
-        return []
-    return sorted((d for d in os.listdir(FOTOS) if DIA_OK.match(d) and os.path.isdir(os.path.join(FOTOS, d))), reverse=True)
+    """Días que tienen capturas o clips, del más nuevo al más viejo."""
+    dias = set()
+    for base in (FOTOS, CLIPS):
+        if os.path.isdir(base):
+            dias.update(d for d in os.listdir(base) if DIA_OK.match(d) and os.path.isdir(os.path.join(base, d)))
+    return sorted(dias, reverse=True)
 
 
 @app.get("/api/fotos")
@@ -395,12 +454,96 @@ def fotos_del_dia(fecha: str):
 
 @app.get("/api/fotos/{fecha}/{archivo}")
 def foto_guardada(fecha: str, archivo: str):
-    if not DIA_OK.match(fecha) or not FOTO_OK.match(archivo):
-        raise HTTPException(404, "no existe")
-    ruta = os.path.join(FOTOS, fecha, archivo)
+    ruta = _ruta("fotos", fecha, archivo)
     if not os.path.isfile(ruta):
         raise HTTPException(404, "no existe")
     return FileResponse(ruta, media_type="image/jpeg", headers={"Cache-Control": "max-age=86400"})
+
+
+@app.get("/api/clips")
+def clips_del_dia(fecha: str):
+    """Nombres de los clips de un día."""
+    if not DIA_OK.match(fecha):
+        raise HTTPException(422, "fecha inválida (AAAA-MM-DD)")
+    carpeta = os.path.join(CLIPS, fecha)
+    if not os.path.isdir(carpeta):
+        return []
+    return sorted(f for f in os.listdir(carpeta) if CLIP_OK.match(f))
+
+
+@app.get("/api/clips/{fecha}/{archivo}")
+def clip_guardado(fecha: str, archivo: str):
+    ruta = _ruta("clips", fecha, archivo)
+    if not os.path.isfile(ruta):
+        raise HTTPException(404, "no existe")
+    return FileResponse(ruta, media_type="video/mp4")
+
+
+@app.post("/api/grabaciones/borrar")
+def borrar_grabaciones(sel: Seleccion, x_admin: str = Header(default="")):
+    exigir_admin(x_admin)
+    pares = _resolver(sel)
+    n = 0
+    carpetas = set()
+    for ruta, _ in pares:
+        try:
+            os.remove(ruta)
+            n += 1
+            carpetas.add(os.path.dirname(ruta))
+        except OSError:
+            pass
+    for c in carpetas:
+        try:
+            os.rmdir(c)
+        except OSError:
+            pass
+    return {"borrados": n}
+
+
+@app.delete("/api/grabaciones/dia/{fecha}")
+def borrar_dia(fecha: str, x_admin: str = Header(default="")):
+    exigir_admin(x_admin)
+    if not DIA_OK.match(fecha):
+        raise HTTPException(422, "fecha inválida (AAAA-MM-DD)")
+    n = 0
+    for tipo, (base, patron, _) in TIPOS.items():
+        carpeta = os.path.join(base, fecha)
+        if os.path.isdir(carpeta):
+            for f in os.listdir(carpeta):
+                if patron.match(f):
+                    ruta = os.path.join(carpeta, f)
+                    try:
+                        os.remove(ruta)
+                        n += 1
+                    except OSError:
+                        pass
+            try:
+                os.rmdir(carpeta)
+            except OSError:
+                pass
+    return {"borrados": n}
+
+
+@app.post("/api/grabaciones/exportar")
+def exportar_seleccion(sel: Seleccion):
+    pares = _resolver(sel)
+    return _zip(pares)
+
+
+@app.get("/api/grabaciones/exportar/{fecha}")
+def exportar_dia(fecha: str):
+    if not DIA_OK.match(fecha):
+        raise HTTPException(422, "fecha inválida (AAAA-MM-DD)")
+    pares = []
+    for tipo, (base, patron, _) in TIPOS.items():
+        carpeta = os.path.join(base, fecha)
+        if os.path.isdir(carpeta):
+            for f in sorted(os.listdir(carpeta)):
+                if patron.match(f):
+                    ruta = os.path.join(carpeta, f)
+                    if os.path.isfile(ruta):
+                        pares.append((ruta, f"{tipo}/{fecha}/{f}"))
+    return _zip(pares)
 
 
 @app.get("/api/salud")

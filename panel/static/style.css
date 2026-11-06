@@ -220,3 +220,128 @@ dialog button:not(.btn) { padding: 6px 10px; border: 1px solid var(--borde); bor
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
 }
+
+.grab {
+  padding: 16px clamp(16px, 3vw, 36px);
+}
+
+.grab-barra {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.grab-barra .form-select {
+  width: auto;
+  min-width: 140px;
+}
+
+.grab-cuenta {
+  color: var(--suave);
+  font-size: .9rem;
+}
+
+.grab-todo {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin: 0;
+}
+
+.grab-pin {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  max-width: 320px;
+  margin-bottom: 8px;
+}
+
+.grab-galeria {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.grab-item {
+  position: relative;
+  margin: 0;
+  background: var(--panel);
+  border: 1px solid var(--borde);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: var(--sombra);
+}
+
+.grab-item.sel {
+  outline: 3px solid var(--acento);
+}
+
+.grab-item img, .grab-item video {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  cursor: pointer;
+  background: #000;
+}
+
+.grab-check {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  width: 22px;
+  height: 22px;
+  z-index: 2;
+  cursor: pointer;
+}
+
+.grab-play {
+  position: absolute;
+  left: 50%;
+  top: 28%;
+  transform: translate(-50%, -50%);
+  color: #fff;
+  font-size: 2rem;
+  text-shadow: 0 1px 4px #000;
+  pointer-events: none;
+}
+
+.grab-item figcaption {
+  padding: 6px 10px;
+  font-size: .85rem;
+}
+
+.grab-item figcaption .grab-meta {
+  color: var(--suave);
+}
+
+.grab-visor {
+  width: min(960px, 94vw);
+  padding: 12px;
+  border: 1px solid var(--borde);
+  border-radius: 12px;
+  background: var(--panel);
+  color: var(--texto);
+}
+
+.grab-visor img, .grab-visor video {
+  width: 100%;
+  max-height: 75vh;
+  object-fit: contain;
+  background: #000;
+}
+
+.grab-visor-acciones {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+@media (max-width: 600px) {
+  .grab-galeria {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  }
+}
